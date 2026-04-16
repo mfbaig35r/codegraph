@@ -217,6 +217,37 @@ def test_get_stats(store: GraphStore) -> None:
     assert stats["avg_connections"] > 0
 
 
+def test_get_subgraph_skips_stub_nodes(store: GraphStore) -> None:
+    """Edges to undefined targets (e.g. builtins) should not crash get_subgraph."""
+    repo, nodes, edges = _sample_repo()
+    # Add an edge pointing to a stub (no matching node definition)
+    edges.append(GraphEdge(
+        source="mod_a.MyClass", target="builtin_stub",
+        edge_type=EdgeType.INHERITS,
+    ))
+    store.save_repo(repo, nodes, edges)
+
+    sub_nodes, sub_edges = store.get_subgraph("test_repo", "mod_a.MyClass", depth=1)
+    node_ids = {n.node_id for n in sub_nodes}
+    assert "mod_a.MyClass" in node_ids
+    # builtin_stub should be skipped, not cause a validation error
+    assert "builtin_stub" not in node_ids
+
+
+def test_export_graph_skips_stub_nodes(store: GraphStore) -> None:
+    """Stub nodes should not appear in the export."""
+    repo, nodes, edges = _sample_repo()
+    edges.append(GraphEdge(
+        source="mod_a", target="external_lib",
+        edge_type=EdgeType.IMPORTS,
+    ))
+    store.save_repo(repo, nodes, edges)
+
+    result = store.export_graph("test_repo")
+    node_ids = {n["id"] for n in result["nodes"]}
+    assert "external_lib" not in node_ids
+
+
 def test_save_repo_replaces_existing(store: GraphStore) -> None:
     repo, nodes, edges = _sample_repo()
     store.save_repo(repo, nodes, edges)

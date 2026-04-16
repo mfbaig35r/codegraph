@@ -318,10 +318,13 @@ class GraphStore:
         visited.update(frontier)
 
         # Collect nodes and edges from the subgraph
+        # Skip stub nodes (created by add_edge but never defined by the parser)
         sub_nodes: list[GraphNode] = []
         for nid in visited:
             if nid in g.nodes:
                 attrs = dict(g.nodes[nid])
+                if "node_type" not in attrs:
+                    continue  # stub node — edge target with no definition
                 sub_nodes.append(GraphNode(node_id=nid, **attrs))
 
         sub_edges: list[GraphEdge] = []
@@ -371,6 +374,8 @@ class GraphStore:
 
         d3_nodes = []
         for nid, attrs in g.nodes(data=True):
+            if "node_type" not in attrs:
+                continue  # stub node
             node_data: dict = {
                 "id": nid,
                 "name": attrs.get("name", ""),
