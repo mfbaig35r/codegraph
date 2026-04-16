@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codegraph"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastMCP server: parse Python repos and query code relationship graphs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+llm = ["openai>=1.0", "numpy>=1.24"]
 dev = ["pytest>=7", "pytest-timeout", "ruff", "mypy>=1.0"]
 
 [project.scripts]
@@ -41,7 +42,7 @@ warn_return_any = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["fastmcp.*", "networkx.*"]
+module = ["fastmcp.*", "networkx.*", "openai.*", "numpy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

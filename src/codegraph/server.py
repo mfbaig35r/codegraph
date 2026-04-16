@@ -1,4 +1,4 @@
-"""codegraph FastMCP server — 9 tools for querying Python code relationship graphs."""
+"""codegraph FastMCP server — 14 tools for querying Python code relationship graphs."""
 
 import os
 from datetime import datetime, timezone
@@ -36,7 +36,12 @@ mcp = FastMCP(
         "Use get_subgraph to get everything connected to a node within N hops. "
         "Use export_graph to get D3.js-compatible JSON for visualization. "
         "Use get_stats for a high-level codebase summary. "
-        "Use find_path to discover how two symbols are connected."
+        "Use find_path to discover how two symbols are connected. "
+        "Use enrich_repo to add LLM-generated summaries, cluster labels, and semantic edges. "
+        "Use get_clusters to see labeled code communities. "
+        "Use ask to answer natural language questions about the codebase. "
+        "Use analyze_impact to see what would break if you changed a node. "
+        "Use narrate to get a guided tour of the codebase."
     ),
 )
 
@@ -335,6 +340,110 @@ def find_path(repo_id: str, source_id: str, target_id: str) -> dict:
         found, path (list of node IDs), edges along the path.
     """
     return _impl_find_path(repo_id, source_id, target_id)
+
+
+# ── LLM-powered tools ────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def enrich_repo(repo_id: str) -> dict:
+    """
+    Enrich a repository with LLM-generated summaries, cluster labels, and
+    semantic similarity edges. Requires OPENAI_API_KEY.
+
+    Generates:
+    - One-line summaries for every function, class, and method
+    - Community clusters with human-readable labels
+    - Semantic similarity edges between related nodes
+
+    Idempotent: skips nodes that already have summaries.
+
+    Args:
+        repo_id: Repository to enrich.
+
+    Returns:
+        repo_id, status, summaries_generated, clusters_found,
+        semantic_edges_added, cost.
+    """
+    from .enrichment import _impl_enrich_repo
+    return _impl_enrich_repo(repo_id, store)
+
+
+@mcp.tool()
+def get_clusters(repo_id: str) -> dict:
+    """
+    Get labeled code clusters (communities) for a repository.
+
+    Run enrich_repo first to generate clusters.
+
+    Args:
+        repo_id: Repository to query.
+
+    Returns:
+        repo_id, count, clusters — each with cluster_id, label, description,
+        member_ids, member_count.
+    """
+    from .enrichment import _impl_get_clusters
+    return _impl_get_clusters(repo_id, store)
+
+
+@mcp.tool()
+def ask(repo_id: str, question: str) -> dict:
+    """
+    Ask a natural language question about the codebase.
+
+    The LLM queries the code graph internally to find relevant nodes and
+    relationships, then synthesizes an answer. Requires OPENAI_API_KEY.
+
+    Args:
+        repo_id:   Repository to query.
+        question:  Natural language question (e.g. "what handles persistence?").
+
+    Returns:
+        repo_id, question, answer, sources (node IDs consulted), cost.
+    """
+    from .intelligence import _impl_ask
+    return _impl_ask(repo_id, question, store)
+
+
+@mcp.tool()
+def analyze_impact(repo_id: str, node_id: str) -> dict:
+    """
+    Analyze what would be affected by changing a node.
+
+    Walks the call graph to find all callers (direct and transitive),
+    then uses the LLM to assess risk. Requires OPENAI_API_KEY.
+
+    Args:
+        repo_id:  Repository to analyze.
+        node_id:  The node you're considering changing.
+
+    Returns:
+        repo_id, node_id, affected_count, risk_level, explanation,
+        affected_nodes, impact_chain, cost.
+    """
+    from .intelligence import _impl_analyze_impact
+    return _impl_analyze_impact(repo_id, node_id, store)
+
+
+@mcp.tool()
+def narrate(repo_id: str) -> dict:
+    """
+    Generate a guided tour of the codebase.
+
+    Analyzes the graph structure, clusters, and node summaries to produce
+    a structured walkthrough of the project. Requires OPENAI_API_KEY.
+    Best results when run after enrich_repo.
+
+    Args:
+        repo_id: Repository to narrate.
+
+    Returns:
+        repo_id, title, sections (each with title, summary, key_nodes,
+        relationships), cost.
+    """
+    from .intelligence import _impl_narrate
+    return _impl_narrate(repo_id, store)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import networkx as nx
 
-from .models import EdgeType, GraphEdge, GraphNode, NodeType, RepoInfo
+from .models import ClusterInfo, EdgeType, GraphEdge, GraphNode, NodeType, RepoInfo
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -64,6 +64,33 @@ class GraphStore:
         self._graphs: dict[str, nx.DiGraph] = {}
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            self._conn.executescript("""
+                CREATE TABLE IF NOT EXISTS clusters (
+                    cluster_id  TEXT NOT NULL,
+                    repo_id     TEXT NOT NULL,
+                    label       TEXT NOT NULL,
+                    description TEXT,
+                    member_ids  TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (repo_id, cluster_id)
+                );
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    node_id     TEXT NOT NULL,
+                    repo_id     TEXT NOT NULL,
+                    embedding   BLOB NOT NULL,
+                    model       TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+                    PRIMARY KEY (repo_id, node_id)
+                );
+            """)
+            # v0.2 migration: LLM enrichment columns
+            for col_ddl in [
+                "ALTER TABLE nodes ADD COLUMN summary TEXT",
+                "ALTER TABLE nodes ADD COLUMN cluster_id TEXT",
+                "ALTER TABLE edges ADD COLUMN weight REAL",
+            ]:
+                try:
+                    self._conn.execute(col_ddl)
+                except sqlite3.OperationalError:
+                    pass
             self._conn.commit()
 
     # ── Internal helpers ─────────────────────────────────────────────────
@@ -194,6 +221,8 @@ class GraphStore:
                 parameters=node.parameters,
                 bases=node.bases,
                 module_path=node.module_path,
+                summary=node.summary,
+                cluster_id=node.cluster_id,
             )
         edges = self._fetchall(
             "SELECT * FROM edges WHERE repo_id = ?", (repo_id,)
@@ -392,6 +421,8 @@ class GraphStore:
                 node_data["bases"] = attrs.get("bases", [])
                 node_data["module_path"] = attrs.get("module_path", "")
                 node_data["line_end"] = attrs.get("line_end")
+                node_data["summary"] = attrs.get("summary")
+                node_data["cluster_id"] = attrs.get("cluster_id")
             d3_nodes.append(node_data)
 
         d3_links = []
@@ -459,3 +490,108 @@ class GraphStore:
             "top_connected": top_connected,
             "avg_connections": round(total_degree / node_count, 2) if node_count else 0,
         }
+
+    # ── LLM enrichment methods ──────────────────────────────────────────
+
+    def get_nodes_without_summary(
+        self, repo_id: str, limit: int = 500,
+    ) -> list[GraphNode]:
+        rows = self._fetchall(
+            "SELECT * FROM nodes WHERE repo_id = ? AND summary IS NULL "
+            "AND node_type != 'module' ORDER BY file_path, line_start LIMIT ?",
+            (repo_id, limit),
+        )
+        return [self._parse_node(r) for r in rows]
+
+    def update_node_summaries(
+        self, repo_id: str, summaries: list[tuple[str, str]],
+    ) -> int:
+        with self._lock:
+            for node_id, summary in summaries:
+                self._conn.execute(
+                    "UPDATE nodes SET summary = ? WHERE repo_id = ? AND node_id = ?",
+                    (summary, repo_id, node_id),
+                )
+            self._conn.commit()
+        self._graphs.pop(repo_id, None)
+        return len(summaries)
+
+    def update_node_clusters(
+        self, repo_id: str, assignments: dict[str, str],
+    ) -> None:
+        with self._lock:
+            for node_id, cluster_id in assignments.items():
+                self._conn.execute(
+                    "UPDATE nodes SET cluster_id = ? WHERE repo_id = ? AND node_id = ?",
+                    (cluster_id, repo_id, node_id),
+                )
+            self._conn.commit()
+        self._graphs.pop(repo_id, None)
+
+    def save_clusters(
+        self, repo_id: str, clusters: list[ClusterInfo],
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM clusters WHERE repo_id = ?", (repo_id,)
+            )
+            for c in clusters:
+                self._conn.execute(
+                    "INSERT INTO clusters (cluster_id, repo_id, label, "
+                    "description, member_ids) VALUES (?, ?, ?, ?, ?)",
+                    (c.cluster_id, repo_id, c.label, c.description,
+                     json.dumps(c.member_ids)),
+                )
+            self._conn.commit()
+
+    def get_clusters(self, repo_id: str) -> list[ClusterInfo]:
+        rows = self._fetchall(
+            "SELECT * FROM clusters WHERE repo_id = ? ORDER BY cluster_id",
+            (repo_id,),
+        )
+        return [ClusterInfo.model_validate(r) for r in rows]
+
+    def save_embeddings(
+        self, repo_id: str, embeddings: list[tuple[str, bytes, str]],
+    ) -> None:
+        """Save embeddings as (node_id, embedding_bytes, model)."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM embeddings WHERE repo_id = ?", (repo_id,)
+            )
+            self._conn.executemany(
+                "INSERT INTO embeddings (node_id, repo_id, embedding, model) "
+                "VALUES (?, ?, ?, ?)",
+                [(nid, repo_id, emb, model) for nid, emb, model in embeddings],
+            )
+            self._conn.commit()
+
+    def get_embeddings(self, repo_id: str) -> list[tuple[str, bytes]]:
+        """Return (node_id, embedding_bytes) pairs."""
+        rows = self._fetchall(
+            "SELECT node_id, embedding FROM embeddings WHERE repo_id = ?",
+            (repo_id,),
+        )
+        return [(r["node_id"], r["embedding"]) for r in rows]
+
+    def add_semantic_edges(
+        self, repo_id: str, edges: list[GraphEdge],
+    ) -> int:
+        """Add semantic similarity edges. Clears existing ones first."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM edges WHERE repo_id = ? AND edge_type = ?",
+                (repo_id, EdgeType.SEMANTIC_SIMILARITY),
+            )
+            if edges:
+                self._conn.executemany(
+                    "INSERT INTO edges (repo_id, source, target, edge_type, "
+                    "file_path, line) VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (repo_id, e.source, e.target, e.edge_type, None, None)
+                        for e in edges
+                    ],
+                )
+            self._conn.commit()
+        self._graphs.pop(repo_id, None)
+        return len(edges)
