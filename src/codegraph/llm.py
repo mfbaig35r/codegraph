@@ -10,20 +10,25 @@ from .models import CostSummary
 
 
 def _load_dotenv() -> None:
-    """Load .env from the codegraph data directory."""
-    data_dir = Path(os.environ.get("CODEGRAPH_DIR", "~/.codegraph")).expanduser()
-    env_file = data_dir / ".env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    """Load .env from the data directory, project root, or cwd."""
+    candidates = [
+        Path(os.environ.get("CODEGRAPH_DIR", "~/.codegraph")).expanduser() / ".env",
+        Path(__file__).resolve().parent.parent.parent / ".env",  # project root
+        Path.cwd() / ".env",
+    ]
+    for env_file in candidates:
+        if not env_file.exists():
             continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:  # don't override existing env vars
-            os.environ[key] = value
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+        return  # stop after first .env found
 
 # Pricing per 1M tokens (USD)
 _PRICING: dict[str, dict[str, float]] = {
@@ -106,7 +111,7 @@ class LLMClient:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
         }
         if tools:
             kwargs["tools"] = tools
