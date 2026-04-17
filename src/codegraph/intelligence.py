@@ -1,11 +1,14 @@
 """LLM-powered reasoning: natural language queries, impact analysis, narratives."""
 
 import json
+import logging
 
 import networkx as nx
 
 from .llm import get_llm_client
 from .store import GraphStore
+
+log = logging.getLogger("codegraph.intelligence")
 
 # ── Inner tool definitions for NL queries ────────────────────────────────────
 

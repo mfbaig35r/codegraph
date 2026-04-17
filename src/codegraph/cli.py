@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import sys
 
 from .server import _impl_export_graph, _impl_get_stats, _impl_index_repo, store
@@ -124,7 +125,18 @@ def cli_main() -> None:
     # serve (default — MCP server)
     sub.add_parser("serve", help="Start the MCP server (default)")
 
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable debug logging"
+    )
+
     args = parser.parse_args()
+
+    # Configure logging for CLI
+    level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(name)s %(levelname)s: %(message)s",
+    )
 
     if args.command == "index":
         cmd_index(args)

@@ -1,5 +1,6 @@
 """codegraph FastMCP server — 14 tools for querying Python code relationship graphs."""
 
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,8 @@ from .models import RepoInfo
 from .parser import parse_repository
 from .repo import resolve_repo
 from .store import GraphStore
+
+log = logging.getLogger("codegraph")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -53,11 +56,13 @@ def _impl_index_repo(source: str) -> dict:
     try:
         repo_id, repo_path = resolve_repo(source, DATA_DIR / "clones")
     except (ValueError, RuntimeError) as exc:
+        log.warning("Failed to resolve repo %r: %s", source, exc)
         return {"error": str(exc)}
 
     try:
         nodes, edges = parse_repository(repo_path)
     except Exception as exc:
+        log.error("Failed to parse repository %s: %s", repo_path, exc)
         return {"error": f"Failed to parse repository: {exc}"}
 
     py_files = list(Path(repo_path).rglob("*.py"))
@@ -350,7 +355,11 @@ def find_path(repo_id: str, source_id: str, target_id: str) -> dict:
 
 
 @mcp.tool()
-def enrich_repo(repo_id: str) -> dict:
+def enrich_repo(
+    repo_id: str,
+    similarity_threshold: float = 0.8,
+    force: bool = False,
+) -> dict:
     """
     Enrich a repository with LLM-generated summaries, cluster labels, and
     semantic similarity edges. Requires OPENAI_API_KEY.
@@ -360,17 +369,24 @@ def enrich_repo(repo_id: str) -> dict:
     - Community clusters with human-readable labels
     - Semantic similarity edges between related nodes
 
-    Idempotent: skips nodes that already have summaries.
+    Idempotent: skips nodes that already have summaries, skips clustering
+    if clusters already exist (unless force=True).
 
     Args:
-        repo_id: Repository to enrich.
+        repo_id:               Repository to enrich.
+        similarity_threshold:  Cosine similarity threshold for semantic edges (default 0.8).
+        force:                 Re-generate clusters even if they already exist (default False).
 
     Returns:
         repo_id, status, summaries_generated, clusters_found,
         semantic_edges_added, cost.
     """
     from .enrichment import _impl_enrich_repo
-    return _impl_enrich_repo(repo_id, store)
+    return _impl_enrich_repo(
+        repo_id, store,
+        similarity_threshold=similarity_threshold,
+        force=force,
+    )
 
 
 @mcp.tool()

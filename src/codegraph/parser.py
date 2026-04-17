@@ -1,9 +1,12 @@
 """AST-based Python code parser for codegraph."""
 
 import ast
+import logging
 from pathlib import Path
 
 from .models import EdgeType, GraphEdge, GraphNode, NodeType
+
+log = logging.getLogger("codegraph.parser")
 
 
 def _path_to_module(rel_path: Path) -> str:
@@ -352,7 +355,11 @@ def _resolve_calls(
                 file_path=edge.file_path,
                 line=edge.line,
             ))
-        # Skip unresolved calls
+        else:
+            log.debug(
+                "Unresolved call: %s -> %s (line %s)",
+                edge.source, target, edge.line,
+            )
 
     return resolved
 

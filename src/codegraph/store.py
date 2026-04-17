@@ -1,6 +1,7 @@
 """Graph storage: SQLite persistence + networkx in-memory graph."""
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -9,6 +10,8 @@ from pathlib import Path
 import networkx as nx
 
 from .models import ClusterInfo, EdgeType, GraphEdge, GraphNode, NodeType, RepoInfo
+
+log = logging.getLogger("codegraph.store")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -186,6 +189,7 @@ class GraphStore:
 
                 self._conn.commit()
             except Exception:
+                log.error("save_repo failed for %s, rolling back", repo.repo_id)
                 self._conn.rollback()
                 raise
 

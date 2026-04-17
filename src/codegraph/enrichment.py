@@ -1,12 +1,15 @@
 """LLM-powered enrichment: summaries, clusters, semantic edges."""
 
 import json
+import logging
 import struct
 from collections import defaultdict
 
 from .llm import get_llm_client
 from .models import ClusterInfo, EdgeType, GraphEdge, GraphNode
 from .store import GraphStore
+
+log = logging.getLogger("codegraph.enrichment")
 
 # ── Summaries ────────────────────────────────────────────────────────────────
 
@@ -80,6 +83,7 @@ def _generate_summaries(store: GraphStore, repo_id: str) -> int:
     for result in results:
         content = result.get("content", "")
         if result.get("error"):
+            log.warning("LLM error during summary generation: %s", result["error"])
             parse_failures += 1
             continue
         # Strip markdown fences if present
@@ -93,8 +97,10 @@ def _generate_summaries(store: GraphStore, repo_id: str) -> int:
                     if isinstance(item, dict) and "node_id" in item and "summary" in item:
                         all_summaries.append((item["node_id"], item["summary"]))
             else:
+                log.warning("LLM returned non-array JSON for summaries: %s", content[:200])
                 parse_failures += 1
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError) as exc:
+            log.warning("Failed to parse summary response: %s — %s", exc, content[:200])
             parse_failures += 1
 
     if all_summaries:
@@ -278,7 +284,12 @@ def _compute_semantic_edges(
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
-def _impl_enrich_repo(repo_id: str, store: GraphStore) -> dict:
+def _impl_enrich_repo(
+    repo_id: str,
+    store: GraphStore,
+    similarity_threshold: float = 0.8,
+    force: bool = False,
+) -> dict:
     """Generate summaries, detect clusters, compute semantic edges."""
     llm = get_llm_client()
     if not llm.is_available():
@@ -296,8 +307,16 @@ def _impl_enrich_repo(repo_id: str, store: GraphStore) -> dict:
     llm.reset_cost_tracking()
 
     summaries_count = _generate_summaries(store, repo_id)
-    clusters_count = _detect_clusters(store, repo_id)
-    semantic_count = _compute_semantic_edges(store, repo_id)
+
+    # Skip clustering if clusters already exist (unless forced)
+    existing_clusters = store.get_clusters(repo_id)
+    if existing_clusters and not force:
+        log.info("Clusters already exist for %s, skipping (use force=True)", repo_id)
+        clusters_count = len(existing_clusters)
+    else:
+        clusters_count = _detect_clusters(store, repo_id)
+
+    semantic_count = _compute_semantic_edges(store, repo_id, threshold=similarity_threshold)
 
     cost = llm.get_cost_summary()
 
