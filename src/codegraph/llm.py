@@ -3,9 +3,27 @@
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
 from .models import CostSummary
+
+
+def _load_dotenv() -> None:
+    """Load .env from the codegraph data directory."""
+    data_dir = Path(os.environ.get("CODEGRAPH_DIR", "~/.codegraph")).expanduser()
+    env_file = data_dir / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:  # don't override existing env vars
+            os.environ[key] = value
 
 # Pricing per 1M tokens (USD)
 _PRICING: dict[str, dict[str, float]] = {
@@ -25,6 +43,7 @@ class LLMClient:
     """Sync OpenAI client with cost tracking and batch parallelism."""
 
     def __init__(self) -> None:
+        _load_dotenv()
         self._api_key = os.environ.get("OPENAI_API_KEY", "")
         self._client: Any = None
         self._input_tokens = 0

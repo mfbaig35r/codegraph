@@ -23,7 +23,7 @@ llm = ["openai>=1.0", "numpy>=1.24"]
 dev = ["pytest>=7", "pytest-timeout", "ruff", "mypy>=1.0"]
 
 [project.scripts]
-codegraph = "codegraph.server:main"
+codegraph = "codegraph.cli:cli_main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/codegraph"]

@@ -1,5 +1,5 @@
 """Allow running as `python -m codegraph`."""
 
-from .server import main
+from .cli import cli_main
 
-main()
+cli_main()
