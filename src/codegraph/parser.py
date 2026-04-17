@@ -261,11 +261,11 @@ class CodeGraphVisitor(ast.NodeVisitor):
             # Resolve relative imports
             target = node.module
             if node.level and node.level > 0:
-                # Relative import — prefix with parent module path
                 parts = self._module_path.split(".")
-                if len(parts) >= node.level:
-                    prefix = ".".join(parts[: -node.level]) if node.level < len(parts) else ""
-                    target = f"{prefix}.{node.module}" if prefix else node.module
+                if node.level < len(parts):
+                    prefix = ".".join(parts[: -node.level])
+                    target = f"{prefix}.{node.module}"
+                # else: level >= parts depth — keep node.module as-is
             self._edges.append(GraphEdge(
                 source=self._module_path,
                 target=target,

@@ -1,6 +1,7 @@
 """Graph storage: SQLite persistence + networkx in-memory graph."""
 
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -59,6 +60,11 @@ class GraphStore:
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        # Restrict database file permissions to owner only
+        try:
+            os.chmod(db_path, 0o600)
+        except OSError:
+            pass
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.Lock()
         self._graphs: dict[str, nx.DiGraph] = {}
@@ -131,51 +137,57 @@ class GraphStore:
         edges: list[GraphEdge],
     ) -> None:
         with self._lock:
-            # Clear any existing data for this repo
-            self._conn.execute("DELETE FROM edges WHERE repo_id = ?", (repo.repo_id,))
-            self._conn.execute("DELETE FROM nodes WHERE repo_id = ?", (repo.repo_id,))
-            self._conn.execute("DELETE FROM repos WHERE repo_id = ?", (repo.repo_id,))
+            try:
+                # Clear any existing data for this repo
+                self._conn.execute("DELETE FROM edges WHERE repo_id = ?", (repo.repo_id,))
+                self._conn.execute("DELETE FROM nodes WHERE repo_id = ?", (repo.repo_id,))
+                self._conn.execute("DELETE FROM repos WHERE repo_id = ?", (repo.repo_id,))
 
-            self._conn.execute(
-                "INSERT INTO repos (repo_id, repo_path, repo_url, name, "
-                "indexed_at, file_count, node_count, edge_count) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    repo.repo_id, repo.repo_path, repo.repo_url, repo.name,
-                    repo.indexed_at, repo.file_count, repo.node_count, repo.edge_count,
-                ),
-            )
-
-            if nodes:
-                self._conn.executemany(
-                    "INSERT INTO nodes (node_id, repo_id, node_type, name, file_path, "
-                    "line_start, line_end, docstring, decorators, parameters, bases, "
-                    "module_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [
-                        (
-                            n.node_id, repo.repo_id, n.node_type, n.name, n.file_path,
-                            n.line_start, n.line_end, n.docstring,
-                            json.dumps(n.decorators), json.dumps(n.parameters),
-                            json.dumps(n.bases), n.module_path,
-                        )
-                        for n in nodes
-                    ],
+                self._conn.execute(
+                    "INSERT INTO repos (repo_id, repo_path, repo_url, name, "
+                    "indexed_at, file_count, node_count, edge_count) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        repo.repo_id, repo.repo_path, repo.repo_url, repo.name,
+                        repo.indexed_at, repo.file_count, repo.node_count,
+                        repo.edge_count,
+                    ),
                 )
 
-            if edges:
-                self._conn.executemany(
-                    "INSERT INTO edges (repo_id, source, target, edge_type, "
-                    "file_path, line) VALUES (?, ?, ?, ?, ?, ?)",
-                    [
-                        (
-                            repo.repo_id, e.source, e.target, e.edge_type,
-                            e.file_path, e.line,
-                        )
-                        for e in edges
-                    ],
-                )
+                if nodes:
+                    self._conn.executemany(
+                        "INSERT INTO nodes (node_id, repo_id, node_type, name, "
+                        "file_path, line_start, line_end, docstring, decorators, "
+                        "parameters, bases, module_path) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                n.node_id, repo.repo_id, n.node_type, n.name,
+                                n.file_path, n.line_start, n.line_end, n.docstring,
+                                json.dumps(n.decorators), json.dumps(n.parameters),
+                                json.dumps(n.bases), n.module_path,
+                            )
+                            for n in nodes
+                        ],
+                    )
 
-            self._conn.commit()
+                if edges:
+                    self._conn.executemany(
+                        "INSERT INTO edges (repo_id, source, target, edge_type, "
+                        "file_path, line) VALUES (?, ?, ?, ?, ?, ?)",
+                        [
+                            (
+                                repo.repo_id, e.source, e.target, e.edge_type,
+                                e.file_path, e.line,
+                            )
+                            for e in edges
+                        ],
+                    )
+
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
         # Invalidate cached graph
         self._graphs.pop(repo.repo_id, None)

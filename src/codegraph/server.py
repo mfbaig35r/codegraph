@@ -55,7 +55,11 @@ def _impl_index_repo(source: str) -> dict:
     except (ValueError, RuntimeError) as exc:
         return {"error": str(exc)}
 
-    nodes, edges = parse_repository(repo_path)
+    try:
+        nodes, edges = parse_repository(repo_path)
+    except Exception as exc:
+        return {"error": f"Failed to parse repository: {exc}"}
+
     py_files = list(Path(repo_path).rglob("*.py"))
 
     repo_info = RepoInfo(

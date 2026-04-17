@@ -76,8 +76,12 @@ def _generate_summaries(store: GraphStore, repo_id: str) -> int:
 
     # Parse results and collect summaries
     all_summaries: list[tuple[str, str]] = []
+    parse_failures = 0
     for result in results:
         content = result.get("content", "")
+        if result.get("error"):
+            parse_failures += 1
+            continue
         # Strip markdown fences if present
         content = content.strip()
         if content.startswith("```"):
@@ -88,8 +92,10 @@ def _generate_summaries(store: GraphStore, repo_id: str) -> int:
                 for item in parsed:
                     if isinstance(item, dict) and "node_id" in item and "summary" in item:
                         all_summaries.append((item["node_id"], item["summary"]))
+            else:
+                parse_failures += 1
         except (json.JSONDecodeError, KeyError):
-            continue
+            parse_failures += 1
 
     if all_summaries:
         store.update_node_summaries(repo_id, all_summaries)

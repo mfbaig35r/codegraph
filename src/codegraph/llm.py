@@ -1,6 +1,7 @@
 """OpenAI client wrapper with cost tracking and batching."""
 
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -10,25 +11,20 @@ from .models import CostSummary
 
 
 def _load_dotenv() -> None:
-    """Load .env from the data directory, project root, or cwd."""
-    candidates = [
-        Path(os.environ.get("CODEGRAPH_DIR", "~/.codegraph")).expanduser() / ".env",
-        Path(__file__).resolve().parent.parent.parent / ".env",  # project root
-        Path.cwd() / ".env",
-    ]
-    for env_file in candidates:
-        if not env_file.exists():
+    """Load .env from the codegraph data directory only."""
+    data_dir = Path(os.environ.get("CODEGRAPH_DIR", "~/.codegraph")).expanduser()
+    env_file = data_dir / ".env"
+    if not env_file.exists():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        for line in env_file.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key = key.strip()
-            value = value.strip().strip("'\"")
-            if key and key not in os.environ:
-                os.environ[key] = value
-        return  # stop after first .env found
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 # Pricing per 1M tokens (USD)
 _PRICING: dict[str, dict[str, float]] = {
@@ -198,13 +194,16 @@ class LLMClient:
         return all_embeddings
 
 
-# Module-level lazy singleton
+# Module-level lazy singleton (thread-safe)
 _llm_client: LLMClient | None = None
+_llm_lock = threading.Lock()
 
 
 def get_llm_client() -> LLMClient:
-    """Return the shared LLMClient instance."""
+    """Return the shared LLMClient instance (thread-safe)."""
     global _llm_client
     if _llm_client is None:
-        _llm_client = LLMClient()
+        with _llm_lock:
+            if _llm_client is None:
+                _llm_client = LLMClient()
     return _llm_client

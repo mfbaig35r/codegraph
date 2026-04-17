@@ -63,4 +63,10 @@ def resolve_repo(source: str, clone_dir: Path) -> tuple[str, str]:
         raise ValueError(f"Path does not exist: {source}")
     if not path.is_dir():
         raise ValueError(f"Not a directory: {source}")
+    if path.is_symlink():
+        raise ValueError(f"Symlinks not supported: {source}")
+    # Reject system directories
+    for forbidden in ("/etc", "/var", "/usr", "/bin", "/sbin", "/sys", "/proc"):
+        if str(path).startswith(forbidden):
+            raise ValueError(f"Cannot index system directory: {path}")
     return _repo_hash(source), str(path)
